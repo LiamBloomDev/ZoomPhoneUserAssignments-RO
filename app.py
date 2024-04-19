@@ -34,16 +34,20 @@ from http import HTTPStatus, HTTPMethod
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, HttpUrl
 from pathlib import Path
-from sys import stdout
+from sys import stdout, path
+import os
 import logging
 import requests
 import json
 
 
+SCRIPT_ROOT = path[0]
+
+
 class Settings(BaseSettings):
     """A class to load strongly typed settings from ./.env"""
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=os.path.join(SCRIPT_ROOT, ".env"))
 
     # Logging
     LOG_LEVEL: Union[int, str] = logging.INFO
