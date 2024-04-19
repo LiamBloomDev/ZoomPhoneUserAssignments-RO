@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     ZOOM_AUTH_URL: HttpUrl = "https://zoom.us/oauth/token"
     ZOOM_CLIENT_ID: str
     ZOOM_CLIENT_SECRET: SecretStr
-    ZOOM_ACCOUNT_ID: int
+    ZOOM_ACCOUNT_ID: str
     ZOOM_GRANT_TYPE: str = "account_credentials"
 
     # Zoom API information
@@ -157,10 +157,8 @@ def auth(
 def do_get(
     url: str,
     auth: Optional[Dict[str, str]] = None,
-    query: str = "?page_size=100",
-    headers: Dict[str, str] = {
-        "Content-Type": "application/json",
-    },
+    query: Dict = {"page_size": 100},
+    headers: Optional[Dict[str, str]] = None,
     next_page: Optional[str] = None,
 ) -> List[Dict]:
     """Get all paginated results from the URL/query.
@@ -171,21 +169,21 @@ def do_get(
     page.
     """
     log.debug("Making GET request to: %s", url)
-    log.debug("Query string: %s", query)
-    log.debug("Combined URL: %s%s", url, query)
+    log.debug("Query: %s", query)
     results = []
     if auth:
         log.debug("Adding auth header to headers.")
         headers.update(auth)
-    elif "Authorization" not in headers:
+    elif "authorization" not in headers:
         log.error("Did not receive an authentication form (header or parameter)!")
         raise Exception("Authorization header missing from GET request.")
     if next_page:
         log.debug("Adding next_page_token to query string")
-        query += f"&next_page_token={next_page}"
-        log.debug("New URL: %s%s", url, query)
+        query["next_page_token"] = next_page
+        log.debug("New query: %s", query)
     resp = requests.get(
-        url=f"{url}{query}",
+        url=url,
+        params=query,
         headers=headers,
     )
     if resp.status_code != HTTPStatus.OK:
@@ -204,14 +202,12 @@ def do_get(
     # Recursively process all subsequent pages
     if next_page:
         log.debug("Response has a next page")
+        query["next_page_token"] = next_page
         return results.extend(
             do_get(
                 url=url,
-                # Remove the next_page_token that was just used from the query
-                query="".join(query.split("&")[:-1]),
-                headers=headers,
-                # Pass the new next_page_token
-                next_page=next_page,
+                query=query,
+                headers=headers
             )
         )
     return results
@@ -241,7 +237,10 @@ if __name__ == "__main__":
         url=f"{settings.ZOOM_API_URL}"
         + f"{settings.ZOOM_ENDPOINTS['USERS']['GET']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query="?page_size=100&status=active",
+        query={
+            "page_size": 100,
+            "status": "active"
+        },
     )
 
     # Get all unassigned Zoom Phone phone number objects
@@ -249,7 +248,10 @@ if __name__ == "__main__":
         url=f"{settings.ZOOM_API_URL}"
         + f"{settings.ZOOM_ENDPOINTS['PHONES']['GET']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query="?page_size=100&type=unassigned",
+        query={
+            "page_size": 100,
+            "type": "unassigned"
+        }
     )
 
     log.debug("Processing numbers responses:\n%s", all_phone_responses)
