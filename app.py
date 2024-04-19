@@ -22,6 +22,7 @@
         * requests
             * pip install requests
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Union
@@ -34,9 +35,8 @@ import json
 
 class Settings(BaseSettings):
     """A class to load strongly typed settings from ./.env"""
-    model_config = SettingsConfigDict(
-        env_file='.env'
-    )
+
+    model_config = SettingsConfigDict(env_file=".env")
 
     # Zoom authentication requirements
     # https://developers.zoom.us/docs/internal-apps/s2s-oauth/
@@ -50,13 +50,7 @@ class Settings(BaseSettings):
     # https://developers.zoom.us/docs/api/rest/reference/phone/methods
     ZOOM_API_URL: Url = "https://api.zoom.us/v2"
     ZOOM_ENDPOINTS: Dict[
-        str, Dict[
-            str, Dict[
-                str, Union[
-                    str, List, None, Dict, HTTPMethod
-                ]
-            ]
-        ]
+        str, Dict[str, Dict[str, Union[str, List, None, Dict, HTTPMethod]]]
     ] = {
         "PHONES": {
             "GET_ALL": {
@@ -77,19 +71,11 @@ class Settings(BaseSettings):
             "ASSIGN": {
                 "METHOD": HTTPMethod.POST,
                 "PATH": "/phone/users/{userId}/phone_numbers",
-                "BODY": [
-                    {
-                        "id": "{phoneNumberId}"
-                    }
-                ]
+                "BODY": [{"id": "{phoneNumberId}"}],
             },
         },
         "USERS": {
-            "GET_ALL": {
-                "METHOD": HTTPMethod.GET,
-                "PATH": "/users",
-                "BODY": None
-            },
+            "GET_ALL": {"METHOD": HTTPMethod.GET, "PATH": "/users", "BODY": None},
             "GET": {
                 "METHOD": HTTPMethod.GET,
                 "PATH": "/users/{userId}",
@@ -98,16 +84,12 @@ class Settings(BaseSettings):
             "REMOVE_EXTENSION": {
                 "METHOD": HTTPMethod.PATCH,
                 "PATH": "/users/{userId}",
-                "BODY": {
-                    "extension_number": ""
-                }
+                "BODY": {"extension_number": ""},
             },
             "ASSIGN_EXTENSION": {
                 "METHOD": HTTPMethod.PATCH,
                 "PATH": "/users/{userId}",
-                "BODY": {
-                    "extension_number": "{extensionNumber}"
-                },
+                "BODY": {"extension_number": "{extensionNumber}"},
             },
         },
     }
@@ -122,20 +104,18 @@ def auth(
     username: str = settings.ZOOM_CLIENT_ID,
     password: str = settings.ZOOM_CLIENT_SECRET.get_secret_value(),
     account_id: str = settings.ZOOM_ACCOUNT_ID,
-    headers: Dict[str, str] = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    headers: Dict[str, str] = {"Content-Type": "application/x-www-form-urlencoded"},
 ) -> Tuple[Optional[str], Optional[int]]:
     """Retrieve an auth token from Zoom
 
-        Reference: https://developers.zoom.us/docs/internal-apps/s2s-oauth/
+    Reference: https://developers.zoom.us/docs/internal-apps/s2s-oauth/
 
-        Uses `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` for basic auth against
-        `ZOOM_AUTH_URL` with the headers:
-            - 'Content-Type': 'application/x-www-form-urlencoded'
-        The request body contains:
-            - 'grant_type': 'account_credentials'
-            - 'account_id': '`ZOOM_ACCOUNT_ID`'
+    Uses `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` for basic auth against
+    `ZOOM_AUTH_URL` with the headers:
+        - 'Content-Type': 'application/x-www-form-urlencoded'
+    The request body contains:
+        - 'grant_type': 'account_credentials'
+        - 'account_id': '`ZOOM_ACCOUNT_ID`'
     """
     resp = requests.post(
         url=url,
@@ -144,7 +124,7 @@ def auth(
             "grant_type": "account_credentials",
             "account_id": account_id,
         },
-        headers=headers
+        headers=headers,
     )
     data = resp.json()
     return (data.get("access_token", None), data.get("expires_in", None))
@@ -157,14 +137,14 @@ def do_get(
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
     },
-    next_page: Optional[str] = None
+    next_page: Optional[str] = None,
 ) -> List[Dict]:
     """Get all paginated results from the URL/query.
 
-        If a GET request to the Zoom Phone API has more results than the
-        page_size in the query (max 100), then a next_page_token will be
-        returned in the response.  This token is used to request the next
-        page.
+    If a GET request to the Zoom Phone API has more results than the
+    page_size in the query (max 100), then a next_page_token will be
+    returned in the response.  This token is used to request the next
+    page.
     """
     results = []
     if auth:
@@ -188,10 +168,10 @@ def do_get(
             do_get(
                 url=url,
                 # Remove the next_page_token that was just used from the query
-                query="".join(query.split('&')[:-1]),
+                query="".join(query.split("&")[:-1]),
                 headers=headers,
                 # Pass the new next_page_token
-                next_page=next_page
+                next_page=next_page,
             )
         )
     return results
@@ -212,26 +192,25 @@ if __name__ == "__main__":
 
     # Get all active Zoom Phone user objects.
     all_users_responses = do_get(
-        url=f"{settings.ZOOM_API_URL}" +
-            f"{settings.ZOOM_ENDPOINTS['USERS']['GET']['PATH']}",
+        url=f"{settings.ZOOM_API_URL}"
+        + f"{settings.ZOOM_ENDPOINTS['USERS']['GET']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query="?page_size=100&status=active"
+        query="?page_size=100&status=active",
     )
 
     # Get all unassigned Zoom Phone phone number objects
     all_phone_responses = do_get(
-        url=f"{settings.ZOOM_API_URL}" +
-            f"{settings.ZOOM_ENDPOINTS['PHONES']['GET']['PATH']}",
+        url=f"{settings.ZOOM_API_URL}"
+        + f"{settings.ZOOM_ENDPOINTS['PHONES']['GET']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query="?page_size=100&type=unassigned"
+        query="?page_size=100&type=unassigned",
     )
 
     # Extract the phone numbers from the responses
     # https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listAccountPhoneNumbers
     all_phone_numbers = [
         phone_number.get("number", "ERROR")
-        for phone_number
-        in all_phone_responses.get('phone_numbers')
+        for phone_number in all_phone_responses.get("phone_numbers")
     ]
 
     # Extract the phone numbers and extension from the responses
@@ -243,41 +222,25 @@ if __name__ == "__main__":
             if user.get("extension_number", None):
                 user_extension_map[user["id"]] = user["extension_number"]
 
-    with open(
-        file="./user_phone_map.json",
-        mode="w",
-        encoding="utf-8"
-    ) as f:
+    with open(file="./user_phone_map.json", mode="w", encoding="utf-8") as f:
         json.dump(
-            obj=user_phone_map,
-            fp=f,
-            sort_keys=True,
-            indent=4,
-            separators=(',', ': ')
+            obj=user_phone_map, fp=f, sort_keys=True, indent=4, separators=(",", ": ")
         )
 
-    with open(
-        file="./user_extension_map.json",
-        mode="w",
-        encoding="utf-8"
-    ) as f:
+    with open(file="./user_extension_map.json", mode="w", encoding="utf-8") as f:
         json.dump(
             obj=user_extension_map,
             fp=f,
             sort_keys=True,
             indent=4,
-            separators=(',', ': ')
+            separators=(",", ": "),
         )
 
-    with open(
-        file="./phone_numbers.json",
-        mode="w",
-        encoding="utf-8"
-    ) as f:
+    with open(file="./phone_numbers.json", mode="w", encoding="utf-8") as f:
         json.dump(
             obj=all_phone_numbers,
             fp=f,
             sort_keys=True,
             indent=4,
-            separators=(',', ': ')
+            separators=(",", ": "),
         )
