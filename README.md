@@ -33,3 +33,8 @@ The following Zoom Phone API endpoints are used by this script:
 [GET  /phone/users](https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listPhoneUsers)
 
 > Returns a list of all of an account's users who are assigned a Zoom Phone license.
+
+
+## TODO
+ - Refactor to pydantic models instead of dictionaries
+ - Fork into library with additional functionality
