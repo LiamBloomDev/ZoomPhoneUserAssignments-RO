@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, Union
 from http import HTTPStatus, HTTPMethod
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, Url
+from pydantic import SecretStr, HttpUrl
 import requests
 import json
 
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # Zoom authentication requirements
     # https://developers.zoom.us/docs/internal-apps/s2s-oauth/
-    ZOOM_AUTH_URL: Url = "https://zoom.us/oauth/token"
+    ZOOM_AUTH_URL: HttpUrl = "https://zoom.us/oauth/token"
     ZOOM_CLIENT_ID: str
     ZOOM_CLIENT_SECRET: SecretStr
     ZOOM_ACCOUNT_ID: int
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # Zoom API information
     # https://developers.zoom.us/docs/api/rest/reference/phone/methods
-    ZOOM_API_URL: Url = "https://api.zoom.us/v2"
+    ZOOM_API_URL: HttpUrl = "https://api.zoom.us/v2"
     ZOOM_ENDPOINTS: Dict[
         str, Dict[str, Dict[str, Union[str, List, None, Dict, HTTPMethod]]]
     ] = {
@@ -100,7 +100,7 @@ settings = Settings()
 
 
 def auth(
-    url: str = settings.ZOOM_AUTH_URL,
+    url: str = str(settings.ZOOM_AUTH_URL),
     username: str = settings.ZOOM_CLIENT_ID,
     password: str = settings.ZOOM_CLIENT_SECRET.get_secret_value(),
     account_id: str = settings.ZOOM_ACCOUNT_ID,
@@ -206,11 +206,16 @@ if __name__ == "__main__":
         query="?page_size=100&type=unassigned",
     )
 
+    # Condense the paged results (lists of objects) into a single list of objects
+    phone_numbers_list: List[Dict] = []
+    for response in all_phone_responses:
+        phone_numbers_list.extend(response.get("phone_numbers", []))
+
     # Extract the phone numbers from the responses
     # https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listAccountPhoneNumbers
     all_phone_numbers = [
         phone_number.get("number", "ERROR")
-        for phone_number in all_phone_responses.get("phone_numbers")
+        for phone_number in phone_numbers_list
     ]
 
     # Extract the phone numbers and extension from the responses
