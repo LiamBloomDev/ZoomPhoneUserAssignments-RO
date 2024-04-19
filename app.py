@@ -34,14 +34,15 @@ from http import HTTPStatus, HTTPMethod
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, HttpUrl
 from pathlib import Path
-from sys import stdout, path
+from loguru import logger
+from logging import INFO
+import sys
 import os
-import logging
 import requests
 import json
 
 
-SCRIPT_ROOT = path[0]
+SCRIPT_ROOT = sys.path[0]
 
 
 class Settings(BaseSettings):
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=os.path.join(SCRIPT_ROOT, ".env"))
 
     # Logging
-    LOG_LEVEL: Union[int, str] = logging.INFO
+    LOG_LEVEL: Union[int, str] = INFO
     LOG_FILE: Optional[Path] = None
 
     # Zoom authentication requirements
@@ -114,15 +115,9 @@ class Settings(BaseSettings):
 settings = Settings()
 
 #   Configure logging
-log = logging.getLogger(__name__)
-log.setLevel(settings.LOG_LEVEL)
+logger.level = settings.LOG_LEVEL
 if settings.LOG_FILE:
-    handler = logging.FileHandler(settings.LOG_FILE)
-else:
-    handler = logging.StreamHandler(stdout)
-for h in log.handlers:
-    log.removeHandler(h)
-log.addHandler(handler)
+    logger.add(settings.LOG_FILE)
 
 
 def auth(
@@ -143,7 +138,7 @@ def auth(
         - 'grant_type': 'account_credentials'
         - 'account_id': '`ZOOM_ACCOUNT_ID`'
     """
-    log.debug("Making auth request to %s", url)
+    logger.debug("Making auth request to %s", url)
     resp = requests.post(
         url=url,
         auth=(username, password),
@@ -153,14 +148,14 @@ def auth(
         },
         headers=headers,
     )
-    log.debug("Auth request status: %s", resp.status_code)
-    log.debug("Auth request message: %s", resp.reason)
+    logger.debug("Auth request status: %s", resp.status_code)
+    logger.debug("Auth request message: %s", resp.reason)
     try:
         data = resp.json()
-        log.debug("Auth response has data.")
-        log.debug("%s", data)
+        logger.debug("Auth response has data.")
+        logger.debug("%s", data)
     except json.JSONDecodeError:
-        log.error("Auth response has no data.")
+        logger.error("Auth response has no data.")
         return None, None
     return (data.get("access_token", None), data.get("expires_in", None))
 
@@ -179,49 +174,49 @@ def do_get(
     returned in the response.  This token is used to request the next
     page.
     """
-    log.debug("Making GET request to: %s", url)
-    log.debug("Query: %s", query)
+    logger.debug("Making GET request to: %s", url)
+    logger.debug("Query: %s", query)
     results = []
     if auth:
-        log.debug("Adding auth header to headers.")
+        logger.debug("Adding auth header to headers.")
         headers.update(auth)
     elif "Authorization" not in headers:
-        log.error("Did not receive an authentication form (header or parameter)!")
+        logger.error("Did not receive an authentication form (header or parameter)!")
         raise Exception("Authorization header missing from GET request.")
     if next_page:
-        log.debug("Adding next_page_token to query string")
+        logger.debug("Adding next_page_token to query string")
         query["next_page_token"] = next_page
-        log.debug("New query: %s", query)
+        logger.debug("New query: %s", query)
     resp = requests.get(
         url=url,
         params=query,
         headers=headers,
     )
     if resp.status_code != HTTPStatus.OK:
-        log.error("Non-200 response!")
-        log.error("Status code: %s", resp.status_code)
-        log.error("Reason: %s", resp.reason)
+        logger.error("Non-200 response!")
+        logger.error("Status code: %s", resp.status_code)
+        logger.error("Reason: %s", resp.reason)
         return []
     try:
         results.append(resp.json())
-        log.debug("GET response data size: %s", len(results[-1]))
+        logger.debug("GET response data size: %s", len(results[-1]))
     except json.JSONDecodeError:
-        log.error("GET response has no data!")
+        logger.error("GET response has no data!")
         return []
     # Try to get a next_page_token from the new result
     next_page = results[-1].get("next_page_token", None)
     # Recursively process all subsequent pages
     if next_page:
-        log.debug("Response has a next page")
+        logger.debug("Response has a next page")
         query["next_page_token"] = next_page
         results.extend(do_get(url=url, query=query, headers=headers))
     return results
 
 
 if __name__ == "__main__":
-    log.info(">>>   Zoom Phone Number Script    <<<")
-    log.info("Retrieved settings from %s.", settings.model_config["env_file"])
-    log.debug("Settings dump:\n%s", settings.model_dump())
+    logger.info(">>>   Zoom Phone Number Script    <<<")
+    logger.info("Retrieved settings from %s.", settings.model_config["env_file"])
+    logger.debug("Settings dump:\n%s", settings.model_dump())
 
     all_phone_numbers = {}
     unassigned_phone_numbers = {}
@@ -230,14 +225,14 @@ if __name__ == "__main__":
     user_extensions = {}
 
     # Get an access token and store the expiration time (not used)
-    log.info("Attempting authentication to Zoom...")
+    logger.info("Attempting authentication to Zoom...")
     t_token, t_exp = auth()
 
     # If a token was not returned, the script cannot continue.
     if not t_token:
-        log.error("Authentication failed!")
+        logger.error("Authentication failed!")
         raise Exception("Unable to authenticate to Zoom.")
-    log.info("Authenticated to Zoom.")
+    logger.info("Authenticated to Zoom.")
 
     # Get all licensed Zoom Phone user objects
     all_user_responses = do_get(
@@ -266,7 +261,7 @@ if __name__ == "__main__":
         query={"page_size": 100, "type": "all"},
     )
 
-    log.debug("Processing phone_number responses:\n%s", all_phone_responses)
+    logger.debug("Processing phone_number responses:\n%s", all_phone_responses)
     # Condense the paged results (lists of objects) into
     # a single list of objects
     phone_numbers_list: List[Dict] = []
