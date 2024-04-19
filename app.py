@@ -5,14 +5,18 @@
     as a reference for what settings are required and available for the .env
     file.
 
-    The script accepts no arguments, and will generate three (3) JSON files
+    The script accepts no arguments, and will generate five (5) JSON files
     in the same folder as the script.  The files will be named:
-        * user_phone_map.json
-            * Contains a map of user id to list of assigned phone numbers.
-        * user_extension_map.json
-            * Contains a map of user id to assigned extension number.
-        * phone_numbers.json
-            * Contains a list of all unassigned phone numbers
+        * user_emails.json
+            * Contains user.id -> user.email
+        * user_phone_numbers.json
+            * Contains phone_number.assignee.id -> phone_number.number
+        * user_extensions.json
+            * Contains phone_number.assignee.id -> phone_number.assignee.extension_number
+        * all_phone_numbers.json
+            * Contains ALL phone_number.number -> phone_number.id
+        * unassigned_phone_numbers.json
+            * Contains UNASSIGNED phone_number.number -> phone_number.id
 
     Required Non-Standard Modules:
         * pydantic
@@ -28,7 +32,9 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, Union
 from http import HTTPStatus, HTTPMethod
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, HttpUrl, Path
+from pydantic import SecretStr, HttpUrl
+from pathlib import Path
+from sys import stdout
 import logging
 import requests
 import json
@@ -80,20 +86,20 @@ class Settings(BaseSettings):
             },
         },
         "USERS": {
-            "GET_ALL": {"METHOD": HTTPMethod.GET, "PATH": "/users", "BODY": None},
+            "GET_ALL": {"METHOD": HTTPMethod.GET, "PATH": "/phone/users", "BODY": None},
             "GET": {
                 "METHOD": HTTPMethod.GET,
-                "PATH": "/users/{userId}",
+                "PATH": "/phone/users/{userId}",
                 "BODY": None,
             },
             "REMOVE_EXTENSION": {
                 "METHOD": HTTPMethod.PATCH,
-                "PATH": "/users/{userId}",
+                "PATH": "/phone/users/{userId}",
                 "BODY": {"extension_number": ""},
             },
             "ASSIGN_EXTENSION": {
                 "METHOD": HTTPMethod.PATCH,
-                "PATH": "/users/{userId}",
+                "PATH": "/phone/users/{userId}",
                 "BODY": {"extension_number": "{extensionNumber}"},
             },
         },
@@ -109,7 +115,7 @@ log.setLevel(settings.LOG_LEVEL)
 if settings.LOG_FILE:
     handler = logging.FileHandler(settings.LOG_FILE)
 else:
-    handler = logging.StreamHandler("sys.stdout")
+    handler = logging.StreamHandler(stdout)
 for h in log.handlers:
     log.removeHandler(h)
 log.addHandler(handler)
@@ -148,6 +154,7 @@ def auth(
     try:
         data = resp.json()
         log.debug("Auth response has data.")
+        log.debug("%s", data)
     except json.JSONDecodeError:
         log.error("Auth response has no data.")
         return None, None
@@ -158,7 +165,7 @@ def do_get(
     url: str,
     auth: Optional[Dict[str, str]] = None,
     query: Dict = {"page_size": 100},
-    headers: Optional[Dict[str, str]] = None,
+    headers: Dict[str, str] = {},
     next_page: Optional[str] = None,
 ) -> List[Dict]:
     """Get all paginated results from the URL/query.
@@ -174,7 +181,7 @@ def do_get(
     if auth:
         log.debug("Adding auth header to headers.")
         headers.update(auth)
-    elif "authorization" not in headers:
+    elif "Authorization" not in headers:
         log.error("Did not receive an authentication form (header or parameter)!")
         raise Exception("Authorization header missing from GET request.")
     if next_page:
@@ -190,37 +197,33 @@ def do_get(
         log.error("Non-200 response!")
         log.error("Status code: %s", resp.status_code)
         log.error("Reason: %s", resp.reason)
-        return results
+        return []
     try:
         results.append(resp.json())
         log.debug("GET response data size: %s", len(results[-1]))
     except json.JSONDecodeError:
         log.error("GET response has no data!")
-        return results
+        return []
     # Try to get a next_page_token from the new result
     next_page = results[-1].get("next_page_token", None)
     # Recursively process all subsequent pages
     if next_page:
         log.debug("Response has a next page")
         query["next_page_token"] = next_page
-        return results.extend(
-            do_get(
-                url=url,
-                query=query,
-                headers=headers
-            )
-        )
+        results.extend(do_get(url=url, query=query, headers=headers))
     return results
 
 
 if __name__ == "__main__":
     log.info(">>>   Zoom Phone Number Script    <<<")
-    log.info("Retrieved settings from %s.", settings.model_config.env_file)
+    log.info("Retrieved settings from %s.", settings.model_config["env_file"])
     log.debug("Settings dump:\n%s", settings.model_dump())
-    # Holds userID -> phone_numbers
-    user_phone_map: Dict[str, List[str]] = {}
-    # Holds userID -> extension
-    user_extension_map: Dict[str, str] = {}
+
+    all_phone_numbers = {}
+    unassigned_phone_numbers = {}
+    user_phone_numbers = {}
+    user_emails = {}
+    user_extensions = {}
 
     # Get an access token and store the expiration time (not used)
     log.info("Attempting authentication to Zoom...")
@@ -232,29 +235,34 @@ if __name__ == "__main__":
         raise Exception("Unable to authenticate to Zoom.")
     log.info("Authenticated to Zoom.")
 
-    # Get all active Zoom Phone user objects.
-    all_users_responses = do_get(
+    # Get all licensed Zoom Phone user objects
+    all_user_responses = do_get(
         url=f"{settings.ZOOM_API_URL}"
-        + f"{settings.ZOOM_ENDPOINTS['USERS']['GET']['PATH']}",
+        + f"{settings.ZOOM_ENDPOINTS['USERS']['GET_ALL']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query={
-            "page_size": 100,
-            "status": "active"
-        },
+        query={"page_size": 100, "status": "activate"},
     )
 
-    # Get all unassigned Zoom Phone phone number objects
+    # Condense the paged results (list of objects) into
+    # a single list of objects
+    users_list: List[Dict] = []
+    for response in all_user_responses:
+        users_list.extend(response.get("users", []))
+
+    # Extract the ids and emails from the responses
+    # https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listPhoneUsers
+    for user in users_list:
+        user_emails[user["id"]] = user["email"]
+
+    # Get all Zoom Phone phone number objects
     all_phone_responses = do_get(
         url=f"{settings.ZOOM_API_URL}"
-        + f"{settings.ZOOM_ENDPOINTS['PHONES']['GET']['PATH']}",
+        + f"{settings.ZOOM_ENDPOINTS['PHONES']['GET_ALL']['PATH']}",
         auth={"Authorization": f"Bearer {t_token}"},
-        query={
-            "page_size": 100,
-            "type": "unassigned"
-        }
+        query={"page_size": 100, "type": "all"},
     )
 
-    log.debug("Processing numbers responses:\n%s", all_phone_responses)
+    log.debug("Processing phone_number responses:\n%s", all_phone_responses)
     # Condense the paged results (lists of objects) into
     # a single list of objects
     phone_numbers_list: List[Dict] = []
@@ -263,39 +271,53 @@ if __name__ == "__main__":
 
     # Extract the phone numbers from the responses
     # https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listAccountPhoneNumbers
-    all_phone_numbers = [
-        phone_number.get("number", "ERROR") for phone_number in phone_numbers_list
-    ]
+    for phone_number in phone_numbers_list:
+        all_phone_numbers[phone_number["number"]] = phone_number["id"]
+        if "assignee" in phone_number:
+            user_phone_numbers[phone_number["assignee"]["id"]] = phone_number["number"]
+            extension = phone_number["assignee"].get("extension_number", None)
+            if extension:
+                user_extensions[phone_number["assignee"]["id"]] = extension
+        else:
+            unassigned_phone_numbers[phone_number["number"]] = phone_number["id"]
 
-    log.debug("Processing user responses:\n%s", all_users_responses)
-    # Extract the phone numbers and extension from the responses
-    # https://developers.zoom.us/docs/api/rest/reference/phone/methods/#operation/listPhoneUsers
-    for user_response in all_users_responses:
-        for user in user_response.get("users", []):
-            if user.get("phone_numbers", None):
-                user_phone_map[user["id"]] = user["phone_numbers"]
-            if user.get("extension_number", None):
-                user_extension_map[user["id"]] = user["extension_number"]
-
-    with open(file="./user_phone_map.json", mode="w", encoding="utf-8") as f:
+    with open(file="./user_phone_numbers.json", mode="w", encoding="utf-8") as f:
         json.dump(
-            obj=user_phone_map, fp=f, sort_keys=True, indent=4, separators=(",", ": ")
-        )
-
-    with open(file="./user_extension_map.json", mode="w", encoding="utf-8") as f:
-        json.dump(
-            obj=user_extension_map,
+            obj=user_phone_numbers,
             fp=f,
             sort_keys=True,
             indent=4,
             separators=(",", ": "),
         )
 
-    with open(file="./phone_numbers.json", mode="w", encoding="utf-8") as f:
+    with open(file="./all_phone_numbers.json", mode="w", encoding="utf-8") as f:
         json.dump(
             obj=all_phone_numbers,
             fp=f,
             sort_keys=True,
             indent=4,
             separators=(",", ": "),
+        )
+
+    with open(file="./user_extensions.json", mode="w", encoding="utf-8") as f:
+        json.dump(
+            obj=user_extensions,
+            fp=f,
+            sort_keys=True,
+            indent=4,
+            separators=(",", ": "),
+        )
+
+    with open(file="./unassigned_phone_numbers.json", mode="w", encoding="utf-8") as f:
+        json.dump(
+            obj=unassigned_phone_numbers,
+            fp=f,
+            sort_keys=True,
+            indent=4,
+            separators=(",", ": "),
+        )
+
+    with open(file="./user_emails.json", mode="w", encoding="utf-8") as f:
+        json.dump(
+            obj=user_emails, fp=f, sort_keys=True, indent=4, separators=(",", ": ")
         )
